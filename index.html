@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What Movie Should I Watch?</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#1d2330; --muted:#5d6577; --line:#d6dae2; --accent:#2b5fd9; --warn:#a14a00; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--fg); padding:24px 16px; }
+  h1 { margin:0 0 4px; font-size:1.6rem; }
+  .sub { color:var(--muted); margin:0 0 20px; }
+  .wrap { max-width:1100px; margin:0 auto; display:grid; grid-template-columns: 360px 1fr; gap:20px; }
+  @media (max-width: 800px) { .wrap { grid-template-columns: 1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:18px; }
+  h2 { font-size:1.1rem; margin:0 0 12px; }
+  label { display:block; font-weight:600; font-size:.9rem; margin:12px 0 4px; }
+  input, select { width:100%; padding:8px; border:1px solid var(--line); border-radius:6px; font:inherit; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  input[type=range] { padding:0; }
+  .val { font-weight:400; color:var(--muted); }
+  button { margin-top:18px; width:100%; padding:12px; font:inherit; font-weight:700; background:var(--accent); color:#fff; border:0; border-radius:6px; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:wait; }
+  .note { color:var(--muted); font-size:.82rem; margin-top:12px; }
+  .kpis { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:16px; }
+  .kpi { border:1px solid var(--line); border-radius:6px; padding:10px; }
+  .kpi b { display:block; font-size:.8rem; color:var(--muted); font-weight:600; }
+  .kpi span { font-size:1.5rem; font-variant-numeric:tabular-nums; }
+  .pick { display:grid; grid-template-columns:64px 1fr; gap:12px; padding:10px 0; border-top:1px solid var(--line); }
+  .pick:first-child { border-top:0; }
+  .pick img { width:64px; border-radius:4px; }
+  .pick .meta { font-variant-numeric:tabular-nums; color:var(--muted); font-size:.88rem; }
+  .pick .plot { font-size:.88rem; margin-top:4px; }
+  .why { background:#eef3ff; border-radius:6px; padding:10px 12px; margin-top:12px; }
+  .status { margin-bottom:12px; color:var(--muted); }
+  .status.err { color:var(--warn); }
+  ul { margin:0; padding-left:18px; }
+  li { margin-bottom:6px; }
+  .right { display:grid; gap:20px; }
+</style>
+</head>
+<body>
+<div style="max-width:1100px;margin:0 auto">
+  <h1>What Movie Should I Watch?</h1>
+  <p class="sub">Ava Bradbury · Data: OMDb API</p>
+</div>
+
+<div class="wrap">
+  <!-- INPUTS -->
+  <form class="card" id="form">
+    <h2>Inputs</h2>
+    <label for="genre">Genre</label>
+    <select id="genre">
+      <option>Action</option><option>Comedy</option><option>Drama</option>
+      <option>Horror</option><option selected>Sci-Fi</option>
+    </select>
+
+    <label for="kw">Search keyword (OMDb searches by title only)</label>
+    <input id="kw" value="star" placeholder="e.g. love, night, star" required>
+
+    <div class="row">
+      <div><label for="maxRt">Max runtime (min)</label><input id="maxRt" type="number" value="150" min="30" max="300"></div>
+      <div><label for="minRt">Min IMDb rating</label><input id="minRt" type="number" value="6.5" min="0" max="10" step="0.1"></div>
+    </div>
+
+    <h2 style="margin-top:20px">Priority weights (0–10)</h2>
+    <label for="wq">Quality weight (rating per minute) <span class="val" id="wqv">5</span></label>
+    <input id="wq" type="range" min="0" max="10" value="5">
+    <label for="wt">Time fit weight (uses your available time) <span class="val" id="wtv">5</span></label>
+    <input id="wt" type="range" min="0" max="10" value="5">
+
+    <label for="key">OMDb API key</label>
+    <input id="key" value="45ffafb">
+
+    <button id="go" type="submit">Get My Top 3 Movies</button>
+    <p class="note">Guardrail: skips any result where Response = "False", Type ≠ movie, or Runtime / imdbRating = "N/A".</p>
+  </form>
+
+  <div class="right">
+    <!-- KPIs + OUTPUT -->
+    <section class="card">
+      <h2>Dashboard KPIs</h2>
+      <div class="kpis">
+        <div class="kpi"><b>Movies matched</b><span id="kMatch">–</span></div>
+        <div class="kpi"><b>Avg IMDb rating</b><span id="kRating">–</span></div>
+        <div class="kpi"><b>Avg runtime</b><span id="kRuntime">–</span></div>
+      </div>
+      <h2>Recommendation output (Top 3 ranked)</h2>
+      <div class="status" id="status">Enter your inputs and click the button.</div>
+      <div id="picks"></div>
+      <div class="why" id="why" hidden></div>
+    </section>
+
+    <section class="card">
+      <h2>Model transparency</h2>
+      <ul>
+        <li>Assumes a higher IMDb rating = better quality and that using more of your free time is better; mood and taste aren't measured.</li>
+        <li>Limited to movies OMDb returns for your keyword (title search only, no genre filter), so genre is filtered after the fact; movies missing runtime/rating are skipped.</li>
+        <li>Score (0–100) = weighted average of Quality (rating ÷ runtime, scaled against the best in these results) and Time Fit (runtime ÷ your max). It's a relative match to your weights, not a guarantee you'll enjoy it.</li>
+      </ul>
+    </section>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+["wq","wt"].forEach(id => $(id).addEventListener("input", () => $(id+"v").textContent = $(id).value));
+
+async function omdb(params) {
+  const url = "https://www.omdbapi.com/?" + new URLSearchParams({ ...params, apikey: $("key").value.trim() });
+  const r = await fetch(url);
+  if (!r.ok) throw new Error("OMDb returned HTTP " + r.status);
+  return r.json();
+}
+
+function setStatus(msg, err) { $("status").textContent = msg; $("status").className = "status" + (err ? " err" : ""); }
+
+$("form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const genre = $("genre").value, kw = $("kw").value.trim();
+  const maxRt = +$("maxRt").value, minRating = +$("minRt").value;
+  let wq = +$("wq").value, wt = +$("wt").value;
+  if (wq + wt === 0) { wq = wt = 1; }
+
+  $("go").disabled = true; $("picks").innerHTML = ""; $("why").hidden = true;
+  setStatus("Searching OMDb for “" + kw + "”…");
+  try {
+    // 1) Search by title keyword (2 pages = up to 20 movies)
+    let hits = [];
+    for (const page of [1, 2]) {
+      const s = await omdb({ s: kw, type: "movie", page });
+      if (s.Response === "False") { if (page === 1) throw new Error(s.Error || "No results"); break; }
+      hits = hits.concat(s.Search);
+    }
+    setStatus("Fetching details for " + hits.length + " movies…");
+
+    // 2) Get full details for each result
+    const details = await Promise.all(hits.map(h => omdb({ i: h.imdbID, plot: "short" }).catch(() => null)));
+
+    // 3) Guardrail + user filters
+    const valid = details.filter(d =>
+      d && d.Response === "True" && d.Type === "movie" &&
+      d.Runtime !== "N/A" && d.imdbRating !== "N/A");
+    const matched = valid.map(d => ({ ...d, rt: parseInt(d.Runtime), rating: parseFloat(d.imdbRating) }))
+      .filter(d => d.Genre.includes(genre) && d.rt <= maxRt && d.rating >= minRating);
+
+    // KPIs
+    const avg = (arr, k) => arr.length ? arr.reduce((a, d) => a + d[k], 0) / arr.length : 0;
+    $("kMatch").textContent = matched.length;
+    $("kRating").textContent = matched.length ? avg(matched, "rating").toFixed(1) : "–";
+    $("kRuntime").textContent = matched.length ? Math.round(avg(matched, "rt")) + " min" : "–";
+
+    if (!matched.length) {
+      setStatus(`No ${genre} movies matched (${valid.length} valid results for “${kw}”). Try another keyword or loosen the filters.`, true);
+      return;
+    }
+
+    // 4) Score
+    const bestQpm = Math.max(...matched.map(d => d.rating / d.rt));
+    matched.forEach(d => {
+      d.quality = (d.rating / d.rt) / bestQpm;       // 0–1
+      d.timeFit = Math.min(d.rt / maxRt, 1);          // 0–1
+      d.score = Math.round(100 * (wq * d.quality + wt * d.timeFit) / (wq + wt));
+    });
+    const top = matched.sort((a, b) => b.score - a.score).slice(0, 3);
+
+    // 5) Render
+    setStatus(`${matched.length} of ${valid.length} valid results matched your filters.`);
+    $("picks").innerHTML = top.map((d, i) => `
+      <div class="pick">
+        ${d.Poster && d.Poster !== "N/A" ? `<img src="${d.Poster}" alt="">` : "<div></div>"}
+        <div>
+          <strong>${i + 1}. ${d.Title} (${d.Year})</strong>
+          <div class="meta">${d.rt} min | IMDb ${d.rating} | Score: ${d.score}</div>
+          <div class="plot">${d.Plot !== "N/A" ? d.Plot : ""}</div>
+        </div>
+      </div>`).join("");
+    const t = top[0];
+    $("why").innerHTML = `<strong>Why this recommendation?</strong><br>${t.Title} ranks #1 because it uses ${Math.round(t.timeFit * 100)}% of your ${maxRt} min and has a rating-per-minute ${Math.round(t.quality * 100)}% of the best match. With Quality and Time Fit weighted ${$("wq").value} / ${$("wt").value}, that gives a score of ${t.score}.`;
+    $("why").hidden = false;
+  } catch (err) {
+    setStatus("Error: " + err.message + " (check your keyword and API key)", true);
+  } finally {
+    $("go").disabled = false;
+  }
+});
+</script>
+</body>
+</html>
